@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flappy Bird JS Clone</title>
+    <style>
+        body {
+            margin: 0;
+            background: #70c1ff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+        h1 {
+            margin: 20px 0 10px 0;
+            color: #333;
+            font-size: 2rem;
+        }
+        #gameContainer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            background: #70c1ff;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+            margin-bottom: 10px;
+            touch-action: manipulation;
+        }
+        #score {
+            font-size: 1.2rem;
+            color: #222;
+            margin-bottom: 10px;
+        }
+        #instructions {
+            color: #555;
+            margin-bottom: 20px;
+            font-size: 1rem;
+        }
+        @media (max-width: 600px) {
+            canvas {
+                width: 95vw !important;
+                height: 60vw !important;
+                max-width: 400px;
+                max-height: 600px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Flappy Bird JS</h1>
+    <div id="instructions">Tap or click to jump! Avoid the pipes and collect coins.</div>
+    <div id="gameContainer">
+        <canvas id="game" width="320" height="480"></canvas>
+        <div id="score">Score: 0</div>
+    </div>
+    <audio id="gameplaySound" src="Resources/Sounds/gameplay.mp3" preload="auto"></audio>
+    <script>
+    // Asset paths
+    const ASSETS = {
+        background: 'Resources/Images/background.png',
+        bird: ['Resources/Images/bird.png', 'Resources/Images/bird2.png'],
+        pipe: 'Resources/Images/pipe.png',
+        coin: [
+            'Resources/Images/coin1.png',
+            'Resources/Images/coin2.png',
+            'Resources/Images/coin3.png',
+            'Resources/Images/coin4.png',
+            'Resources/Images/coin5.png',
+            'Resources/Images/coin6.png',
+        ],
+    };
+
+    // Preload images
+    function loadImage(src) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.src = src;
+            img.onload = () => resolve(img);
+        });
+    }
+    async function loadAssets() {
+        const background = await loadImage(ASSETS.background);
+        const bird = await Promise.all(ASSETS.bird.map(loadImage));
+        const pipe = await loadImage(ASSETS.pipe);
+        const coin = await Promise.all(ASSETS.coin.map(loadImage));
+        return { background, bird, pipe, coin };
+    }
+
+    // Game constants
+    const GRAVITY = 0.5;
+    const FLAP = -7.5;
+    const PIPE_WIDTH = 52;
+    const PIPE_GAP = 120;
+    const BIRD_WIDTH = 34;
+    const BIRD_HEIGHT = 24;
+    const PIPE_SPEED = 2.5;
+    const GROUND_HEIGHT = 60;
+    const COIN_SIZE = 24;
+    const COIN_ANIM_SPEED = 0.15;
+    const BIRD_ANIM_SPEED = 0.15;
+
+    // Game state
+    let birdY, birdV, pipes, coins, score, bestScore, gameOver, started;
+    let birdFrame = 0;
+    let coinFrame = 0;
+
+    // Canvas and context
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const gameplaySound = document.getElementById('gameplaySound');
+
+    // Utility
+    function randBetween(a, b) {
+        return Math.random() * (b - a) + a;
+    }
+
+    // Reset game state
+    function resetGame() {
+        birdY = canvas.height / 2 - BIRD_HEIGHT / 2;
+        birdV = 0;
+        pipes = [];
+        coins = [];
+        score = 0;
+        gameOver = false;
+        started = false;
+        birdFrame = 0;
+        coinFrame = 0;
+        scoreEl.textContent = 'Score: 0';
+    }
+
+    // Spawn a pipe and a coin
+    function spawnPipeAndCoin() {
+        const top = randBetween(40, canvas.height - PIPE_GAP - 180);
+        const bottom = canvas.height - top - PIPE_GAP - GROUND_HEIGHT;
+        const pipeX = canvas.width;
+        pipes.push({ x: pipeX, top, bottom, passed: false });
+        // Coin in the middle of the gap
+        coins.push({
+            x: pipeX + PIPE_WIDTH + 10,
+            y: top + PIPE_GAP / 2 - COIN_SIZE / 2,
+            collected: false
+        });
+    }
+
+    // Collision detection
+    function rectsCollide(ax, ay, aw, ah, bx, by, bw, bh) {
+        return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+    }
+
+    // Main game loop
+    async function main() {
+        const assets = await loadAssets();
+        resetGame();
+        loop();
+
+        function update() {
+            if (!started) return;
+            birdV += GRAVITY;
+            birdY += birdV;
+            birdFrame += BIRD_ANIM_SPEED;
+            coinFrame += COIN_ANIM_SPEED;
+
+            // Move pipes and coins
+            for (let pipe of pipes) pipe.x -= PIPE_SPEED;
+            for (let coin of coins) coin.x -= PIPE_SPEED;
+
+            // Remove off-screen pipes/coins
+            if (pipes.length && pipes[0].x < -PIPE_WIDTH) pipes.shift();
+            if (coins.length && coins[0].x < -COIN_SIZE) coins.shift();
+
+            // Add new pipes/coins
+            if (pipes.length < 3 || pipes[pipes.length-1].x < canvas.width - 160) {
+                spawnPipeAndCoin();
+            }
+
+            // Collision detection for pipes
+            for (let pipe of pipes) {
+                if (
+                    40 < pipe.x + PIPE_WIDTH &&
+                    40 + BIRD_WIDTH > pipe.x &&
+                    (birdY < pipe.top || birdY + BIRD_HEIGHT > canvas.height - pipe.bottom - GROUND_HEIGHT)
+                ) {
+                    gameOver = true;
+                }
+                // Score
+                if (!pipe.passed && pipe.x + PIPE_WIDTH < 40) {
+                    score++;
+                    pipe.passed = true;
+                    scoreEl.textContent = `Score: ${score}`;
+                }
+            }
+            // Collision detection for coins
+            for (let coin of coins) {
+                if (!coin.collected && rectsCollide(40, birdY, BIRD_WIDTH, BIRD_HEIGHT, coin.x, coin.y, COIN_SIZE, COIN_SIZE)) {
+                    coin.collected = true;
+                    score++;
+                    scoreEl.textContent = `Score: ${score}`;
+                    // Play sound
+                    gameplaySound.currentTime = 0;
+                    gameplaySound.play();
+                }
+            }
+            // Bird hit ground or ceiling
+            if (birdY + BIRD_HEIGHT > canvas.height - GROUND_HEIGHT || birdY < 0) {
+                gameOver = true;
+            }
+            if (gameOver) {
+                bestScore = Math.max(score, bestScore || 0);
+                setTimeout(resetGame, 1200);
+            }
+        }
+
+        function draw() {
+            // Background
+            ctx.drawImage(assets.background, 0, 0, canvas.width, canvas.height);
+            // Pipes
+            for (let pipe of pipes) {
+                // Top pipe
+                ctx.save();
+                ctx.translate(pipe.x + PIPE_WIDTH / 2, pipe.top);
+                ctx.scale(1, -1);
+                ctx.drawImage(assets.pipe, -PIPE_WIDTH / 2, 0, PIPE_WIDTH, 320);
+                ctx.restore();
+                // Bottom pipe
+                ctx.drawImage(assets.pipe, pipe.x, canvas.height - pipe.bottom - GROUND_HEIGHT, PIPE_WIDTH, 320);
+            }
+            // Coins
+            for (let coin of coins) {
+                if (!coin.collected) {
+                    const frame = Math.floor(coinFrame) % assets.coin.length;
+                    ctx.drawImage(assets.coin[frame], coin.x, coin.y, COIN_SIZE, COIN_SIZE);
+                }
+            }
+            // Ground (drawn as a filled rect for now)
+            ctx.fillStyle = '#e0c068';
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
+            ctx.fillStyle = '#bfa046';
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, 10);
+            // Bird (animated)
+            const birdImg = assets.bird[Math.floor(birdFrame) % assets.bird.length];
+            ctx.drawImage(birdImg, 40, birdY, BIRD_WIDTH, BIRD_HEIGHT);
+            // Game over text
+            if (gameOver) {
+                ctx.save();
+                ctx.font = 'bold 32px Arial';
+                ctx.fillStyle = '#d32f2f';
+                ctx.textAlign = 'center';
+                ctx.fillText('Game Over', canvas.width/2, canvas.height/2 - 20);
+                ctx.font = '20px Arial';
+                ctx.fillStyle = '#333';
+                ctx.fillText(`Score: ${score}`, canvas.width/2, canvas.height/2 + 10);
+                ctx.fillText(`Best: ${bestScore || 0}`, canvas.width/2, canvas.height/2 + 40);
+                ctx.restore();
+            } else if (!started) {
+                ctx.save();
+                ctx.font = 'bold 24px Arial';
+                ctx.fillStyle = '#333';
+                ctx.textAlign = 'center';
+                ctx.fillText('Tap or click to start', canvas.width/2, canvas.height/2);
+                ctx.restore();
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        // Controls
+        function flap() {
+            if (!started) {
+                started = true;
+                pipes = [];
+                coins = [];
+                birdY = canvas.height / 2 - BIRD_HEIGHT / 2;
+                birdV = FLAP;
+                score = 0;
+                scoreEl.textContent = 'Score: 0';
+                gameOver = false;
+                return;
+            }
+            if (!gameOver) {
+                birdV = FLAP;
+            }
+        }
+        canvas.addEventListener('mousedown', flap);
+        canvas.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            flap();
+        }, { passive: false });
+        document.addEventListener('keydown', function(e) {
+            if (e.code === 'Space' || e.key === ' ') flap();
+        });
+
+        // Start game loop
+        resetGame();
+        loop();
+    }
+    main();
+    </script>
+</body>
+</html> 
